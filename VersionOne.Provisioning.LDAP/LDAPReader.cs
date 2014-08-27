@@ -81,7 +81,7 @@ namespace VersionOne.Provisioning.LDAP
                     }
                     else
                     {
-                        logger.Debug("Excluding member " + user.Username + " from the driectory member list");
+                        logger.Debug("Excluding member " + user.Username + " from the directory member list");
                     }
                 }
                 catch (Exception ex)
