@@ -218,7 +218,6 @@ namespace VersionOne.Provisioning.LDAP
         {
             DirectorySearcher ds = new DirectorySearcher(root);
             ds.Filter = String.Format("(&(memberOf={0})(objectClass={1}))", new[] { userGroupDN, objClass });
-            logger.Info(ds.Filter);
             ds.PropertiesToLoad.Add("distinguishedname");
 
             IList<string> groupMemberDNs = new List<string>();
