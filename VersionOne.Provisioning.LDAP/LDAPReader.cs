@@ -26,6 +26,7 @@ namespace VersionOne.Provisioning.LDAP
         private string fullPath;
         private bool useIntegratedAuth;
         private string domain;
+        private bool useNestedGrouping;
 
         public void Initialize(NameValueCollection appSettings)
         {
@@ -47,12 +48,13 @@ namespace VersionOne.Provisioning.LDAP
             fullPath = root + groupDN;
             useIntegratedAuth = Convert.ToBoolean(appSettings["IntegratedAuth"]);
             domain = appSettings["ldapDomain"];
+            useNestedGrouping = Convert.ToBoolean(appSettings["NestedGrouping"]);
         }
 
         public IList<DirectoryUser> GetUsers()
         {
             IList<DirectoryUser> ldapUsersList = new List<DirectoryUser>();
-            IList<string> userMemberPaths = GetUserMemberPaths(groupDN);
+            IList<string> userMemberPaths = GetMemberPaths(groupDN);
             IList<string> excludedUserMemberPaths;
 
             if (String.IsNullOrEmpty(exclusionGroupDN))
@@ -61,7 +63,7 @@ namespace VersionOne.Provisioning.LDAP
             }
             else
             {
-                excludedUserMemberPaths = GetUserMemberPaths(exclusionGroupDN);
+                excludedUserMemberPaths = GetMemberPaths(exclusionGroupDN);
             }
 
             foreach (string memberPath in userMemberPaths)
@@ -188,22 +190,24 @@ namespace VersionOne.Provisioning.LDAP
             }
         }
 
-        private IList<string> GetUserMemberPaths(string userGroupDN)
+        private IList<string> GetMemberPaths(string userGroupDN)
         {
             // retrieve distinguished names of user members of the group
             IList<string> userMemberPaths = GetDNofGroupMembers(userGroupDN, "person");
 
-            // retrieve distinguished names of group members of the group
-            IList<string> groupMemberDNs = GetDNofGroupMembers(userGroupDN, "group");
-
-            // should user group also have groups within it, recursively get user members of the group
-            foreach (string groupMemberDN in groupMemberDNs)
+            if (useNestedGrouping)
             {
-                // recursion here
-                foreach (string userMemberDN in GetUserMemberPaths(groupMemberDN))
+                // retrieve distinguished names of group members of the group
+                IList<string> groupMemberDNs = GetDNofGroupMembers(userGroupDN, "group");
+                // should user group also have groups within it, recursively get user members of the group
+                foreach (string groupMemberDN in groupMemberDNs)
                 {
-                    // add users of nested group
-                    userMemberPaths.Add(userMemberDN);
+                    // recursion here
+                    foreach (string userMemberDN in GetMemberPaths(groupMemberDN))
+                    {
+                        // add users of nested group
+                        userMemberPaths.Add(userMemberDN);
+                    }
                 }
             }
 
@@ -214,6 +218,7 @@ namespace VersionOne.Provisioning.LDAP
         {
             DirectorySearcher ds = new DirectorySearcher(root);
             ds.Filter = String.Format("(&(memberOf={0})(objectClass={1}))", new[] { userGroupDN, objClass });
+            logger.Info(ds.Filter);
             ds.PropertiesToLoad.Add("distinguishedname");
 
             IList<string> groupMemberDNs = new List<string>();
