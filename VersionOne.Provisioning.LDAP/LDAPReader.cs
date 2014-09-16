@@ -1,5 +1,6 @@
 ﻿/*(c) Copyright 2011, VersionOne, Inc. All rights reserved. (c)*/
 using System;
+using System.Runtime.Serialization;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.DirectoryServices;
@@ -23,6 +24,7 @@ namespace VersionOne.Provisioning.LDAP {
         private string fullPath;
         private bool useIntegratedAuth;
         private string domain;
+        private string exclusionGroupDN;
 
         public void Initialize(NameValueCollection appSettings) {
             if (appSettings["useDefaultLDAPCredentials"].Trim().ToUpper() != "FALSE") {
@@ -41,12 +43,25 @@ namespace VersionOne.Provisioning.LDAP {
             fullPath = root + groupDN;
             useIntegratedAuth = Convert.ToBoolean(appSettings["IntegratedAuth"]);
             domain = appSettings["ldapDomain"];
+            exclusionGroupDN = appSettings["excludeLDAPGroupDN"];
         }
 
         public IList<DirectoryUser> GetUsers() {
             IList<DirectoryUser> ldapUsersList = new List<DirectoryUser>();
             DirectoryEntry group = GetDirectoryEntry(fullPath, new[] { groupMemberAttribute });
+            
             PropertyValueCollection memberPaths = GetMemberPaths(group);
+            PropertyValueCollection excludedUserMemberPaths;
+            
+            if (String.IsNullOrEmpty(exclusionGroupDN))
+            {
+                excludedUserMemberPaths = (PropertyValueCollection) FormatterServices.GetUninitializedObject(typeof(PropertyValueCollection));
+            }
+            else
+            {
+                DirectoryEntry excludeGroup = GetDirectoryEntry(root + exclusionGroupDN, new[] { groupMemberAttribute });
+                excludedUserMemberPaths = GetMemberPaths(excludeGroup);
+            }
 
             foreach (string memberPath in memberPaths) {
                 try {
@@ -56,7 +71,15 @@ namespace VersionOne.Provisioning.LDAP {
                     SetFullName(user, member);
                     SetEmail(user, member);
                     SetNickname(user, member);
-                    ldapUsersList.Add(user);
+                    
+                    if (!excludedUserMemberPaths.Contains(memberPath))
+                    {
+                        ldapUsersList.Add(user);
+                    }
+                    else
+                    {
+                        logger.Debug("Excluding member " + user.Username + " from the directory member list");
+                    }
                 } catch (Exception ex) {
                     logger.ErrorException("Unable to read member from ldap, path: " + memberPath, ex);
                 }
