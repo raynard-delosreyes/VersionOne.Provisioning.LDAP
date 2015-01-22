@@ -1,5 +1,6 @@
 ﻿/*(c) Copyright 2011, VersionOne, Inc. All rights reserved. (c)*/
 using System;
+using System.Runtime.Serialization;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.DirectoryServices;
@@ -23,7 +24,7 @@ namespace VersionOne.Provisioning.LDAP {
         private string fullPath;
         private bool useIntegratedAuth;
         private string domain;
-        private bool useNestedGrouping;
+        private string exclusionGroupDN;
 
         public void Initialize(NameValueCollection appSettings) {
             if (appSettings["useDefaultLDAPCredentials"].Trim().ToUpper() != "FALSE") {
@@ -42,12 +43,25 @@ namespace VersionOne.Provisioning.LDAP {
             fullPath = root + groupDN;
             useIntegratedAuth = Convert.ToBoolean(appSettings["IntegratedAuth"]);
             domain = appSettings["ldapDomain"];
-            useNestedGrouping = Convert.ToBoolean(appSettings["NestedGrouping"]);
+            exclusionGroupDN = appSettings["excludeLDAPGroupDN"];
         }
 
         public IList<DirectoryUser> GetUsers() {
             IList<DirectoryUser> ldapUsersList = new List<DirectoryUser>();
-            IList<string> memberPaths = GetMemberPaths(groupDN);
+            DirectoryEntry group = GetDirectoryEntry(fullPath, new[] { groupMemberAttribute });
+            
+            PropertyValueCollection memberPaths = GetMemberPaths(group);
+            PropertyValueCollection excludedUserMemberPaths;
+            
+            if (String.IsNullOrEmpty(exclusionGroupDN))
+            {
+                excludedUserMemberPaths = (PropertyValueCollection) FormatterServices.GetUninitializedObject(typeof(PropertyValueCollection));
+            }
+            else
+            {
+                DirectoryEntry excludeGroup = GetDirectoryEntry(root + exclusionGroupDN, new[] { groupMemberAttribute });
+                excludedUserMemberPaths = GetMemberPaths(excludeGroup);
+            }
 
             foreach (string memberPath in memberPaths) {
                 try {
@@ -57,7 +71,15 @@ namespace VersionOne.Provisioning.LDAP {
                     SetFullName(user, member);
                     SetEmail(user, member);
                     SetNickname(user, member);
-                    ldapUsersList.Add(user);
+                    
+                    if (!excludedUserMemberPaths.Contains(memberPath))
+                    {
+                        ldapUsersList.Add(user);
+                    }
+                    else
+                    {
+                        logger.Debug("Excluding member " + user.Username + " from the directory member list");
+                    }
                 } catch (Exception ex) {
                     logger.ErrorException("Unable to read member from ldap, path: " + memberPath, ex);
                 }
@@ -135,54 +157,13 @@ namespace VersionOne.Provisioning.LDAP {
             }
         }
 
-        private IList<string> GetMemberPaths(string userGroupDN)
-        {
-            // retrieve distinguished names of user members of the group
-            IList<string> userMemberPaths = GetDNofGroupMembers(userGroupDN, "person");
-
-            if (useNestedGrouping)
-            {
-                // retrieve distinguished names of group members of the group
-                IList<string> groupMemberDNs = GetDNofGroupMembers(userGroupDN, "group");
-
-                // should user group also have groups within it, recursively get user members of the group
-                foreach (string groupMemberDN in groupMemberDNs)
-                {
-                    // recursion here
-                    foreach (string userMemberDN in GetMemberPaths(groupMemberDN))
-                    {
-                        // add users of nested group
-                        userMemberPaths.Add(userMemberDN);
-                    }
-                }
-            }
-
-            return userMemberPaths;
-        }
-
-        private IList<string> GetDNofGroupMembers(string userGroupDN, string objClass)
-        {
-            DirectorySearcher ds = new DirectorySearcher(root);
-            ds.Filter = String.Format("(&(memberOf={0})(objectClass={1}))", new[] { userGroupDN, objClass });
-            ds.PropertiesToLoad.Add("distinguishedname");
-
-            IList<string> groupMemberDNs = new List<string>();
-            try
-            {
-                SearchResultCollection dsAll = ds.FindAll();
-                foreach (SearchResult sr in dsAll)
-                {
-                    string memberDN = sr.Properties["distinguishedname"][0].ToString();
-                    groupMemberDNs.Add(memberDN);
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.ErrorException("Unable to read members from ldap, path: " + root + userGroupDN + ", objectClass: " + objClass, ex);
+        private PropertyValueCollection GetMemberPaths(DirectoryEntry group) {
+            try {
+                return group.Properties[groupMemberAttribute];
+            } catch (Exception ex) {
+                logger.ErrorException("Unable to get group member property for group: " + group.Path + ", group member property name: " + groupMemberAttribute, ex);
                 throw;
             }
-
-            return groupMemberDNs;
         }
 
     }
